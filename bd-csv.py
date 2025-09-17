@@ -15,11 +15,11 @@ resultados_colunas = {}
 resultados_indices = {}
 
 try:
-    # Tenta estabelecer a conexão
+    # conexão com o BD
     conexao = pyodbc.connect(conexao_str)
     print("Conectado!!")
 
-    # Passo 1: Obter a lista de todas as tabelas do banco de dados
+    # lista a quantia e quais são as tabelas do BD | primeira parte para se ter noção se o script está enxergando todas as tabelas
     query_tabelas = "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_CATALOG = ? AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME;"
     df_tabelas = pd.read_sql(query_tabelas, conexao, params=(database,))
     
@@ -27,7 +27,7 @@ try:
     
     print(f"Tabelas encontradas: {', '.join(lista_tabelas)}")
 
-    # Queries | Concatenar os SELECTs numa variavel
+    # queries | Concatenar os SELECTs numa variavel
     query_detalhes_tabela = """
         DECLARE @NmBanco AS VARCHAR(100)
         DECLARE @TB AS VARCHAR(50)
@@ -84,7 +84,8 @@ try:
             C.ORDINAL_POSITION;
     """
 
-    # Sua query para obter os índices
+    # 2° query | traz a coluna dos índices
+    # renomear a variável que armazena a query
     query_detalhes_indices = """
         DECLARE @NmBanco AS VARCHAR(100)
         DECLARE @TB AS VARCHAR(50)
@@ -114,34 +115,34 @@ try:
     for tabela in lista_tabelas:
         print(f"\nColetando informações da tabela: {tabela}")
         
-        # Executa a primeira consulta e armazena o resultado
+        # roda o 1° SELECT e o armazena
         df_colunas = pd.read_sql(query_detalhes_tabela, conexao, params=(database, tabela))
         resultados_colunas[tabela] = df_colunas
         
-        # Executa a segunda consulta e armazena o resultado
+        # roda o 2° SELECT e o armazena
         df_indices = pd.read_sql(query_detalhes_indices, conexao, params=(database, tabela))
         resultados_indices[tabela] = df_indices
 
         print(f"Informações de colunas e índices da tabela '{tabela}' carregadas.")
         
-    print("\nTodas as consultas foram executadas com sucesso!")
+    print("\nOs SELECTs foram executados no BD :]")
 
-    # Passo 4: Salvar todos os DataFrames em um único arquivo Excel, com uma aba por tabela
+    # aqui os 2 DatasFrames serão salvos num mesmo .xlsx
     if resultados_colunas:
-        with pd.ExcelWriter('detalhes_todas_tabelas.xlsx') as writer:
+        with pd.ExcelWriter('detalhes_todas_tabelas.xlsx') as writer: # aqui ele gera um arquivo com esse nome | depois eu altero para auditoria
             for nome_tabela, df_colunas in resultados_colunas.items():
                 df_indices = resultados_indices.get(nome_tabela, pd.DataFrame())
                 
-                # Escreve o DataFrame de colunas na aba
+                # escreve o DataFrame de colunas na aba
                 df_colunas.to_excel(writer, sheet_name=nome_tabela, index=False, startrow=0)
                 
-                # Se houver índices, adiciona-os logo abaixo
+                # se houver índices, adiciona-os logo abaixo
                 if not df_indices.empty:
-                    # Adiciona um título e uma linha de separação para clareza
+                    # adiciona um título e uma linha de separação | ficar mais visual 
                     linha_inicio_indices = len(df_colunas) + 2
                     pd.DataFrame([['--- ÍNDICES ---']]).to_excel(writer, sheet_name=nome_tabela, header=False, index=False, startrow=linha_inicio_indices)
                     
-                    # Escreve o DataFrame de índices abaixo
+                    # escreve o DataFrame de índices abaixo
                     df_indices.to_excel(writer, sheet_name=nome_tabela, index=False, startrow=linha_inicio_indices + 1)
         
         print("\nArquivo Excel 'detalhes_todas_tabelas.xlsx' gerado com sucesso!")
@@ -154,3 +155,4 @@ finally:
         conexao.close()
 
         print("\nConexão com o banco de dados fechada.")
+
