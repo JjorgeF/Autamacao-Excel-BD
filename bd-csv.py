@@ -1,15 +1,16 @@
 import pyodbc
 import pandas as pd
 
-# Informações de conexão (mantidas do seu código)
-server = '*****'
-database = 'AREAS'
-username = '*****'
-password = '*****'
-driver_name = '{ODBC Driver 17 for SQL Server}'
+# armazenei os dados em variáveis, por conta de erro na conexão com o banco
+server = '*****' # aqui pode ser informado o nome do servidor ou o IP
+database = 'AREAS' # informar o BD que deseja executar a extração
+username = '*****' # o usuário
+password = '*****' # a senha
+driver_name = '{ODBC Driver 17 for SQL Server}' # informar o driver do banco | Procure pelo seu BD + Driver
 conexao_str = f'DRIVER={driver_name};SERVER={server};DATABASE={database};UID={username};PWD={password}'
 
-# Dicionários para armazenar os DataFrames de cada tipo de consulta
+# dicionários para armazenar os DataFrames de cada tipo de consulta
+# adicionar mais DataFrames para ocupar os outros SELECTs
 resultados_colunas = {}
 resultados_indices = {}
 
@@ -26,7 +27,7 @@ try:
     
     print(f"Tabelas encontradas: {', '.join(lista_tabelas)}")
 
-    # Queries SQL para extrair as informações
+    # Queries | Concatenar os SELECTs numa variavel
     query_detalhes_tabela = """
         DECLARE @NmBanco AS VARCHAR(100)
         DECLARE @TB AS VARCHAR(50)
@@ -151,4 +152,5 @@ except pyodbc.Error as ex:
 finally:
     if 'conexao' in locals() and conexao:
         conexao.close()
+
         print("\nConexão com o banco de dados fechada.")
