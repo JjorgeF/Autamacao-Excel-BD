@@ -8,7 +8,7 @@ server = '*****'
 database = '*****'
 username = '*****'
 password = '*****'
-driver_name = '{ODBC Driver 17 for SQL Server}'
+driver_name = '*****'
 conexao_str = f'DRIVER={driver_name};SERVER={server};DATABASE={database};UID={username};PWD={password}'
 
 # Dicionário para armazenar todos os DataFrames de todas as tabelas
@@ -106,12 +106,13 @@ try:
             I.name, IC.index_column_id;
     """
 
+    # NOVO SELECT para as chaves estrangeiras, com a adição da cláusula WHERE
     query_fks = """
         DECLARE @TB AS VARCHAR(50)
         SET @TB = ?
         SELECT
             f.name AS 'Nome da Chave Estrangeira',
-            OBJECT_NAME(f.parent_object_id) AS 'Tabela de Origem',
+            OBJECT_NAME(f.parent_object_id) AS 'Referindo para',
             COL_NAME(fc.parent_object_id, fc.parent_column_id) AS 'Coluna de Origem',
             OBJECT_NAME(f.referenced_object_id) AS 'Tabela de Destino',
             COL_NAME(fc.referenced_object_id, fc.referenced_column_id) AS 'Coluna de Destino'
@@ -134,6 +135,7 @@ try:
         df_indices = pd.read_sql(query_detalhes_indices, conexao, params=(database, tabela))
         df_fks = pd.read_sql(query_fks, conexao, params=(tabela,))
         
+        # Corrigido: Envolvendo o nome da tabela com colchetes [] para evitar erros com espaços
         query_linhas = f"SELECT COUNT(*) FROM [{tabela}];"
         df_linhas = pd.read_sql(query_linhas, conexao)
         num_linhas = df_linhas.iloc[0, 0]
@@ -181,9 +183,21 @@ try:
                 table_header_format = workbook.add_format({
                     'bold': True,
                     'border': 1,
-                    'bg_color': '#D9D9D9' # Adiciona fundo cinza para os cabeçalhos das tabelas de dados
+                    'bg_color': '#D9D9D9' 
                 })
                 table_data_format = workbook.add_format({'border': 1})
+                
+                header_cell_format = workbook.add_format({
+                    'bold': True,
+                    'bg_color': '#D9D9D9',
+                    'font_color': 'black',
+                    'align': 'left',
+                    'valign': 'vcenter',
+                    'border': 1
+                })
+                value_cell_format = workbook.add_format({
+                    'border': 1
+                })
 
                 # Função auxiliar para escrever o DataFrame com bordas
                 def write_df_to_excel(worksheet, df, start_row, start_col):
@@ -205,29 +219,58 @@ try:
                     for i in range(1, 10):
                         worksheet.set_column(i, i, 20)
                     
-                    current_row = 1 # Começa na linha 2 (índice 1)
+                    current_row = 0 # Começa na linha 1 (índice 0)
 
-                    # Seção do Cabeçalho principal (como na imagem)
+                    # Seção do cabeçalho superior (Nome do Banco, Schema, etc.)
+                    worksheet.write(current_row, 1, 'Nome do banco de dados (dbname):', header_cell_format)
+                    worksheet.write(current_row, 2, database, value_cell_format)
+                    current_row += 1
+                    
+                    worksheet.write(current_row, 1, 'Nome do Schema:', header_cell_format)
+                    worksheet.write(current_row, 2, 'dbo', value_cell_format)
+                    current_row += 1
+                    
+                    worksheet.write(current_row, 1, 'Código/sigla do banco de dados:', header_cell_format)
+                    worksheet.write(current_row, 2, database, value_cell_format)
+                    current_row += 1
+
+                    worksheet.write(current_row, 1, 'SGBD:', header_cell_format)
+                    worksheet.write(current_row, 2, 'Microsoft SQL Server', value_cell_format)
+                    current_row += 1
+                    
+                    worksheet.write(current_row, 1, 'Quantidade de Tabelas:', header_cell_format)
+                    worksheet.write(current_row, 2, len(lista_tabelas), value_cell_format)
+                    current_row += 2 # pula 2 linhas para o próximo bloco
+
+                    # Seção do Título da Tabela
                     worksheet.merge_range(current_row, 1, current_row + 1, 2, 'Tabela 001', header_format_blue)
-
-                    worksheet.write(current_row + 2, 1, 'Nome da Tabela:', bold_format)
-                    worksheet.write(current_row + 2, 2, nome_tabela)
+                    current_row += 2
                     
-                    worksheet.write(current_row + 3, 1, 'Descrição:', bold_format)
-                    worksheet.merge_range(current_row + 3, 2, current_row + 3, 7, 'Breve descrição do conteúdo da tabela. Breve descrição do conteúdo da tabela. Breve descrição do conteúdo da tabela.', description_format)
+                    worksheet.write(current_row, 1, 'Nome da Tabela:', bold_format)
+                    worksheet.write(current_row, 2, nome_tabela, table_data_format)
+                    current_row += 1
                     
-                    worksheet.write(current_row + 5, 1, 'Número de Colunas:', bold_format)
-                    worksheet.write(current_row + 5, 2, len(dfs['estrutura']), table_data_format)
-                    worksheet.write(current_row + 6, 1, 'Número de Linhas (atual):', bold_format)
-                    worksheet.write(current_row + 6, 2, dfs['num_linhas'], table_data_format)
+                    worksheet.write(current_row, 1, 'Descrição:', bold_format)
+                    worksheet.merge_range(current_row, 2, current_row, 7, 'Breve descrição do conteúdo da tabela. Breve descrição do conteúdo da tabela. Breve descrição do conteúdo da tabela.', description_format)
+                    current_row += 1
+                    
+                    worksheet.write(current_row, 1, 'Número de Colunas:', bold_format)
+                    worksheet.write(current_row, 2, len(dfs['estrutura']), table_data_format)
+                    current_row += 1
+                    
+                    worksheet.write(current_row, 1, 'Número de Linhas (atual):', bold_format)
+                    worksheet.write(current_row, 2, dfs['num_linhas'], table_data_format)
+                    current_row += 1
 
                     # Legenda
-                    worksheet.write(current_row + 2, 5, 'PK = PRIMARY KEY (chave primária)', red_format)
-                    worksheet.write(current_row + 3, 5, 'FK = FOREIGN KEY (chave estrangeira)', red_format)
-                    worksheet.write(current_row + 4, 5, 'M = Mandatory (campo obrigatório)', red_format)
+                    worksheet.write(current_row - 3, 5, 'PK = PRIMARY KEY (chave primária)', red_format)
+                    worksheet.write(current_row - 2, 5, 'FK = FOREIGN KEY (chave estrangeira)', red_format)
+                    worksheet.write(current_row - 1, 5, 'M = Mandatory (campo obrigatório)', red_format)
+                    
+                    # Pula algumas linhas para a próxima seção
+                    current_row += 2
                     
                     # Seção 1: Colunas
-                    current_row = 10
                     worksheet.write(current_row, 1, 'Colunas', header_format_gray)
                     write_df_to_excel(worksheet, dfs['estrutura'], current_row + 1, 1)
                     current_row += len(dfs['estrutura']) + 3
