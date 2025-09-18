@@ -1,64 +1,256 @@
+import pyodbc
 import pandas as pd
-import openpyxl
-from openpyxl.styles import Font, PatternFill
+import xlsxwriter
 import numpy as np
 
-# DataFrames
-df_produtos = pd.DataFrame({
-    'produto': ['Celular', 'Notebook', 'Monitor', 'Teclado'],
-    'preço': [2500, 4000, 800, 150]
-})
+# Informações de conexão
+server = '*****'
+database = '*****'
+username = '*****'
+password = '*****'
+driver_name = '{ODBC Driver 17 for SQL Server}'
+conexao_str = f'DRIVER={driver_name};SERVER={server};DATABASE={database};UID={username};PWD={password}'
 
-nomes_aleatorios = ['Carlos', 'Mariana', 'Ricardo', 'Julia', 'Felipe']
-df_usuarios = pd.DataFrame({
-    'Nome': np.random.choice(nomes_aleatorios, size=3),
-    'Idade': np.random.randint(20, 50, size=3)
-})
+# Dicionário para armazenar todos os DataFrames de todas as tabelas
+resultados_por_tabela = {}
 
-# --- PASSO 1: Salvar APENAS OS DADOS dos produtos na linha 3, coluna B ---
+try:
+    # Tenta estabelecer a conexão
+    conexao = pyodbc.connect(conexao_str)
+    print("Conectado!!")
 
-writer = pd.ExcelWriter('dados_formatados_final.xlsx', engine='openpyxl')
+    # Passo 1: Obter a lista de todas as tabelas do banco de dados
+    query_tabelas = "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_CATALOG = ? AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME;"
+    df_tabelas = pd.read_sql(query_tabelas, conexao, params=(database,))
+    lista_tabelas = df_tabelas['TABLE_NAME'].tolist()
+    print(f"Tabelas encontradas: {', '.join(lista_tabelas)}")
 
-# startcol=1 (Coluna B), startrow=2 (Linha 3), header=False (sem cabeçalho)
-df_produtos.to_excel(writer, index=False, startcol=1, startrow=2, header=False)
+    # Queries SQL
+    query_detalhes_tabela = """
+        DECLARE @NmBanco AS VARCHAR(100)
+        DECLARE @TB AS VARCHAR(50)
+        SET @NmBanco = ? 
+        SET @TB = ? 
+        SELECT
+            ROW_NUMBER() OVER(ORDER BY C.ORDINAL_POSITION) AS 'No.',
+            C.COLUMN_NAME AS 'Nome da Coluna',
+            ISNULL((SELECT 'X' FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE AS KCU INNER JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS AS TC ON KCU.CONSTRAINT_NAME = TC.CONSTRAINT_NAME WHERE KCU.TABLE_NAME = C.TABLE_NAME AND KCU.COLUMN_NAME = C.COLUMN_NAME AND TC.CONSTRAINT_TYPE = 'PRIMARY KEY'), '-') AS 'PK',
+            ISNULL((SELECT 'X' FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS AS RC INNER JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE AS KCU ON KCU.CONSTRAINT_NAME = RC.CONSTRAINT_NAME WHERE KCU.TABLE_NAME = C.TABLE_NAME AND KCU.COLUMN_NAME = C.COLUMN_NAME), '-') AS 'Chave Estrangeira (FK)',
+            IIF(C.IS_NULLABLE = 'YES', '-', 'X') AS 'M',
+            CASE
+                WHEN C.DATA_TYPE IN ('varchar', 'nvarchar', 'char', 'nchar') THEN C.DATA_TYPE + '(' + IIF(C.CHARACTER_MAXIMUM_LENGTH = -1, 'MAX', CAST(C.CHARACTER_MAXIMUM_LENGTH AS VARCHAR(10))) + ')'
+                WHEN C.DATA_TYPE IN ('decimal', 'numeric') THEN C.DATA_TYPE + '(' + CAST(C.NUMERIC_PRECISION AS VARCHAR(10)) + ',' + CAST(C.NUMERIC_SCALE AS VARCHAR(10)) + ')'
+                WHEN C.DATA_TYPE IN ('datetime2', 'datetimeoffset', 'time') THEN C.DATA_TYPE + '(' + CAST(C.DATETIME_PRECISION AS VARCHAR(10)) + ')'
+                ELSE C.DATA_TYPE
+            END AS 'Tipo de dado (data type)',
+            CASE
+                WHEN C.DATA_TYPE IN ('varchar', 'nvarchar', 'char', 'nchar') THEN 'tipo caractere'
+                WHEN C.DATA_TYPE IN ('decimal', 'numeric', 'bigint', 'int', 'smallint', 'tinyint', 'float', 'real') THEN 'tipo numérico'
+                WHEN C.DATA_TYPE IN ('datetime', 'datetime2', 'date', 'time', 'datetimeoffset') THEN 'tipo data'
+                ELSE C.DATA_TYPE
+            END AS 'Espécie do Tipo de Dado',
+            'nativo do banco de dados' AS 'Origem do tipo de dado',
+            ISNULL(C.COLUMN_DEFAULT, '-') AS 'Fórmula (caso aplicável)'
+        FROM
+            INFORMATION_SCHEMA.COLUMNS AS C
+        WHERE
+            C.TABLE_NAME = @TB
+            AND C.TABLE_CATALOG = @NmBanco
+        ORDER BY
+            C.ORDINAL_POSITION;
+    """
+    
+    query_descricoes = """
+        DECLARE @TB AS VARCHAR(50)
+        SET @TB = ?
+        SELECT
+            T.name AS 'Nome da Tabela',
+            C.name AS 'Nome da Coluna',
+            ISNULL (EP.value, '') AS 'Descrição'
+        FROM
+            sys.tables AS T
+        INNER JOIN
+            sys.columns AS C ON T.object_id = C.object_id
+        LEFT JOIN
+            sys.extended_properties AS EP ON EP.major_id = T.object_id
+                AND EP.minor_id = C.column_id
+                AND EP.name = 'MS_Description'
+        WHERE
+            T.name = @TB
+        ORDER BY
+            T.name,
+            C.column_id;
+    """
 
-writer.close()
+    query_detalhes_indices = """
+        DECLARE @NmBanco AS VARCHAR(100)
+        DECLARE @TB AS VARCHAR(50)
+        SET @NmBanco = ?
+        SET @TB = ?
+        SELECT
+            I.name AS 'Nome do Índice',
+            COL_NAME(IC.object_id, IC.column_id) AS 'Nome da Coluna',
+            CASE
+                WHEN I.is_primary_key = 1 THEN 'Chave Primária'
+                WHEN I.is_unique = 1 THEN 'Único'
+                ELSE 'Não Único'
+            END AS 'Tipo',
+            I.type_desc AS 'Descrição do Tipo'
+        FROM
+            sys.indexes AS I
+        INNER JOIN
+            sys.index_columns AS IC ON I.object_id = IC.object_id AND I.index_id = IC.index_id
+        WHERE
+            I.object_id = OBJECT_ID(@TB)
+        ORDER BY
+            I.name, IC.index_column_id;
+    """
 
-# --- PASSO 2: Reabrir e adicionar o cabeçalho na linha 2 ---
+    query_fks = """
+        DECLARE @TB AS VARCHAR(50)
+        SET @TB = ?
+        SELECT
+            f.name AS 'Nome da Chave Estrangeira',
+            OBJECT_NAME(f.parent_object_id) AS 'Tabela de Origem',
+            COL_NAME(fc.parent_object_id, fc.parent_column_id) AS 'Coluna de Origem',
+            OBJECT_NAME(f.referenced_object_id) AS 'Tabela de Destino',
+            COL_NAME(fc.referenced_object_id, fc.referenced_column_id) AS 'Coluna de Destino'
+        FROM
+            sys.foreign_keys AS f
+        INNER JOIN
+            sys.foreign_key_columns AS fc ON f.object_id = fc.constraint_object_id
+        WHERE
+            OBJECT_NAME(f.parent_object_id) = @TB
+        ORDER BY
+            'Nome da Chave Estrangeira';
+    """
+    
+    # Passo 2: Executar todas as consultas para cada tabela e armazenar os resultados
+    for tabela in lista_tabelas:
+        print(f"\nColetando informações da tabela: {tabela}")
+        
+        df_estrutura = pd.read_sql(query_detalhes_tabela, conexao, params=(database, tabela))
+        df_descricoes = pd.read_sql(query_descricoes, conexao, params=(tabela,))
+        df_indices = pd.read_sql(query_detalhes_indices, conexao, params=(database, tabela))
+        df_fks = pd.read_sql(query_fks, conexao, params=(tabela,))
+        
+        query_linhas = f"SELECT COUNT(*) FROM [{tabela}];"
+        df_linhas = pd.read_sql(query_linhas, conexao)
+        num_linhas = df_linhas.iloc[0, 0]
+        
+        resultados_por_tabela[tabela] = {
+            'estrutura': df_estrutura,
+            'descricoes': df_descricoes,
+            'indices': df_indices,
+            'fks': df_fks,
+            'num_linhas': num_linhas
+        }
 
-workbook = openpyxl.load_workbook('dados_formatados_final.xlsx')
-worksheet = workbook.active
-fonte_cabecalho = Font(bold=True, color='0000FF')
+        print(f"Informações de 4 consultas para a tabela '{tabela}' carregadas.")
+        
+    print("\nTodas as consultas foram executadas com sucesso!")
 
-# Adiciona os cabeçalhos do DataFrame de produtos na linha 2
-# O loop começa na coluna 2 (índice 2) para garantir o início na coluna B
-for col_num, coluna in enumerate(df_produtos.columns, 2):
-    cell = worksheet.cell(row=2, column=col_num, value=coluna)
-    cell.font = fonte_cabecalho
+    # Passo 3: Salvar todos os DataFrames no arquivo Excel, em uma aba por tabela, usando xlsxwriter
+    if resultados_por_tabela:
+        try:
+            with pd.ExcelWriter('detalhes_todas_tabelas.xlsx', engine='xlsxwriter') as writer:
+                workbook = writer.book
 
-# --- PASSO 3: Adicionar o DataFrame de usuários com a mesma lógica ---
+                # Define os formatos
+                header_format_blue = workbook.add_format({
+                    'bold': True,
+                    'bg_color': '#0070C0',
+                    'font_color': 'white',
+                    'align': 'center',
+                    'valign': 'vcenter'
+                })
+                header_format_gray = workbook.add_format({
+                    'bold': True,
+                    'bg_color': '#D9D9D9',
+                    'font_color': 'black',
+                    'align': 'left',
+                    'valign': 'vcenter'
+                })
+                bold_format = workbook.add_format({'bold': True})
+                red_format = workbook.add_format({'color': 'red'})
+                
+                # Formato para células mescladas de descrição
+                description_format = workbook.add_format({'text_wrap': True})
 
-# Encontra a próxima linha vazia (depois dos dados do 1º DataFrame) e adiciona 2 para o espaçamento
-proxima_linha = worksheet.max_row + 2
+                for nome_tabela, dfs in resultados_por_tabela.items():
+                    # Adiciona uma nova planilha para cada tabela
+                    worksheet = workbook.add_worksheet(nome_tabela)
+                    writer.sheets[nome_tabela] = worksheet # Adiciona a planilha ao ExcelWriter
+                    
+                    # Ajusta a largura das colunas
+                    for i in range(1, 10):
+                        worksheet.set_column(i, i, 20)
+                    
+                    current_row = 1 # Começa na linha 2 (índice 1)
 
-# Adiciona o título "Usuários"
-# O título também inicia na coluna B (coluna 2)
-titulo_cell = worksheet.cell(row=proxima_linha, column=2, value="Usuários")
-titulo_cell.font = Font(bold=True)
-titulo_cell.fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+                    # parte superior do
+                    # Mescla e escreve 'Tabela 001'
+                    worksheet.merge_range(current_row, 1, current_row + 1, 2, 'Tabela 001', header_format_blue)
 
-# Adiciona os cabeçalhos do novo DataFrame, começando da coluna B (índice 2)
-linha_dados_usuarios = proxima_linha + 1
-for col_num, coluna in enumerate(df_usuarios.columns, 2):
-    cell = worksheet.cell(row=linha_dados_usuarios, column=col_num, value=coluna)
-    cell.font = Font(bold=True, color='0000FF')
+                    worksheet.write(current_row + 2, 1, 'Nome da Tabela:', bold_format)
+                    worksheet.write(current_row + 2, 2, nome_tabela)
+                    
+                    worksheet.write(current_row + 3, 1, 'Descrição:', bold_format)
+                    worksheet.merge_range(current_row + 3, 2, current_row + 3, 7, 'Breve descrição do conteúdo da tabela. Breve descrição do conteúdo da tabela. Breve descrição do conteúdo da tabela.', description_format)
 
-# Adiciona os dados do novo DataFrame, também a partir da coluna B (índice 2)
-for row_num, row_data in enumerate(df_usuarios.values, linha_dados_usuarios + 1):
-    for col_num, valor in enumerate(row_data, 2):
-        worksheet.cell(row=row_num, column=col_num, value=valor)
+                    worksheet.write(current_row + 5, 1, 'Número de Colunas:', bold_format)
+                    worksheet.write(current_row + 5, 2, len(dfs['estrutura']))
+                    worksheet.write(current_row + 6, 1, 'Número de Linhas (atual):', bold_format)
+                    worksheet.write(current_row + 6, 2, dfs['num_linhas'])
 
-# Salva o arquivo final
-workbook.save('dados_formatados_final.xlsx')
+                    # Legenda
+                    worksheet.write(current_row + 2, 9, 'PK = PRIMARY KEY (chave primária)', red_format)
+                    worksheet.write(current_row + 3, 9, 'FK = FOREIGN KEY (chave estrangeira)', red_format)
+                    worksheet.write(current_row + 4, 9, 'M = Mandatory (campo obrigatório)', red_format)
+                    
+                    # Seção 1: Colunas
+                    current_row = 10
+                    worksheet.write(current_row, 1, 'Colunas', header_format_gray)
+                    # Escreve o cabeçalho do DataFrame
+                    worksheet.write_row(current_row + 1, 1, dfs['estrutura'].columns, bold_format)
+                    # Escreve os dados do DataFrame
+                    for r_idx, row in enumerate(dfs['estrutura'].values):
+                        worksheet.write_row(current_row + 2 + r_idx, 1, row)
+                    
+                    current_row += len(dfs['estrutura']) + 3
 
-print("Arquivo Excel atualizado! Verifique o arquivo 'dados_formatados_final.xlsx'.")
+                    # Seção 2: Descrições
+                    if not dfs['descricoes'].empty:
+                        worksheet.write(current_row, 1, 'Descrição das Colunas', header_format_gray)
+                        worksheet.write_row(current_row + 1, 1, dfs['descricoes'].columns, bold_format)
+                        for r_idx, row in enumerate(dfs['descricoes'].values):
+                            worksheet.write_row(current_row + 2 + r_idx, 1, row)
+                        current_row += len(dfs['descricoes']) + 3
+
+                    # Seção 3: Índices
+                    if not dfs['indices'].empty:
+                        worksheet.write(current_row, 1, 'Índices (Indexes)', header_format_gray)
+                        worksheet.write_row(current_row + 1, 1, dfs['indices'].columns, bold_format)
+                        for r_idx, row in enumerate(dfs['indices'].values):
+                            worksheet.write_row(current_row + 2 + r_idx, 1, row)
+                        current_row += len(dfs['indices']) + 3
+
+                    # Seção 4: Chaves Estrangeiras (FKs)
+                    if not dfs['fks'].empty:
+                        worksheet.write(current_row, 1, 'Chaves Estrangeiras (FKs)', header_format_gray)
+                        worksheet.write_row(current_row + 1, 1, dfs['fks'].columns, bold_format)
+                        for r_idx, row in enumerate(dfs['fks'].values):
+                            worksheet.write_row(current_row + 2 + r_idx, 1, row)
+            
+            print("\nArquivo Excel 'detalhes_todas_tabelas.xlsx' gerado com sucesso!")
+
+        except Exception as e:
+            print(f"Erro ao gerar o arquivo Excel: {e}")
+
+except pyodbc.Error as ex:
+    print(f"Erro na execução: {ex}")
+
+finally:
+    if 'conexao' in locals() and conexao:
+        conexao.close()
+        print("\nConexão com o banco de dados fechada.")
