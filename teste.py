@@ -1,5 +1,7 @@
 import pyodbc
 import pandas as pd
+import xlsxwriter
+import numpy as np
 
 # Informações de conexão
 server = '*****'
@@ -10,7 +12,6 @@ driver_name = '{ODBC Driver 17 for SQL Server}'
 conexao_str = f'DRIVER={driver_name};SERVER={server};DATABASE={database};UID={username};PWD={password}'
 
 # Dicionário para armazenar todos os DataFrames de todas as tabelas
-# A estrutura será: {tabela_nome: [df_estrutura, df_descricoes, df_indices, df_fks]}
 resultados_por_tabela = {}
 
 try:
@@ -24,7 +25,7 @@ try:
     lista_tabelas = df_tabelas['TABLE_NAME'].tolist()
     print(f"Tabelas encontradas: {', '.join(lista_tabelas)}")
 
-    # Queries SQL para extrair as informações. Note que agora TODAS usam @TB
+    # Queries SQL
     query_detalhes_tabela = """
         DECLARE @NmBanco AS VARCHAR(100)
         DECLARE @TB AS VARCHAR(50)
@@ -33,16 +34,8 @@ try:
         SELECT
             ROW_NUMBER() OVER(ORDER BY C.ORDINAL_POSITION) AS 'No.',
             C.COLUMN_NAME AS 'Nome da Coluna',
-            ISNULL((SELECT 'X' FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE AS KCU
-                INNER JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS AS TC
-                ON KCU.CONSTRAINT_NAME = TC.CONSTRAINT_NAME
-                WHERE KCU.TABLE_NAME = C.TABLE_NAME
-                AND KCU.COLUMN_NAME = C.COLUMN_NAME
-                AND TC.CONSTRAINT_TYPE = 'PRIMARY KEY'), '-') AS 'PK',
-            ISNULL((SELECT 'X' FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS AS RC
-                INNER JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE AS KCU ON KCU.CONSTRAINT_NAME = RC.CONSTRAINT_NAME
-                WHERE KCU.TABLE_NAME = C.TABLE_NAME
-                    AND KCU.COLUMN_NAME = C.COLUMN_NAME), '-') AS 'Chave Estrangeira (FK)',
+            ISNULL((SELECT 'X' FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE AS KCU INNER JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS AS TC ON KCU.CONSTRAINT_NAME = TC.CONSTRAINT_NAME WHERE KCU.TABLE_NAME = C.TABLE_NAME AND KCU.COLUMN_NAME = C.COLUMN_NAME AND TC.CONSTRAINT_TYPE = 'PRIMARY KEY'), '-') AS 'PK',
+            ISNULL((SELECT 'X' FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS AS RC INNER JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE AS KCU ON KCU.CONSTRAINT_NAME = RC.CONSTRAINT_NAME WHERE KCU.TABLE_NAME = C.TABLE_NAME AND KCU.COLUMN_NAME = C.COLUMN_NAME), '-') AS 'Chave Estrangeira (FK)',
             IIF(C.IS_NULLABLE = 'YES', '-', 'X') AS 'M',
             CASE
                 WHEN C.DATA_TYPE IN ('varchar', 'nvarchar', 'char', 'nchar') THEN C.DATA_TYPE + '(' + IIF(C.CHARACTER_MAXIMUM_LENGTH = -1, 'MAX', CAST(C.CHARACTER_MAXIMUM_LENGTH AS VARCHAR(10))) + ')'
@@ -67,7 +60,6 @@ try:
             C.ORDINAL_POSITION;
     """
     
-    # Consulta de descrições das colunas, agora filtrada por tabela
     query_descricoes = """
         DECLARE @TB AS VARCHAR(50)
         SET @TB = ?
@@ -90,7 +82,6 @@ try:
             C.column_id;
     """
 
-    # Consulta de índices, já com filtro por tabela
     query_detalhes_indices = """
         DECLARE @NmBanco AS VARCHAR(100)
         DECLARE @TB AS VARCHAR(50)
@@ -115,7 +106,6 @@ try:
             I.name, IC.index_column_id;
     """
 
-    # Consulta de chaves estrangeiras, agora filtrada por tabela de origem
     query_fks = """
         DECLARE @TB AS VARCHAR(50)
         SET @TB = ?
@@ -144,47 +134,125 @@ try:
         df_indices = pd.read_sql(query_detalhes_indices, conexao, params=(database, tabela))
         df_fks = pd.read_sql(query_fks, conexao, params=(tabela,))
         
-        # Armazena todos os DataFrames em uma lista para a tabela atual
+        query_linhas = f"SELECT COUNT(*) FROM [{tabela}];"
+        df_linhas = pd.read_sql(query_linhas, conexao)
+        num_linhas = df_linhas.iloc[0, 0]
+        
         resultados_por_tabela[tabela] = {
             'estrutura': df_estrutura,
             'descricoes': df_descricoes,
             'indices': df_indices,
-            'fks': df_fks
+            'fks': df_fks,
+            'num_linhas': num_linhas
         }
 
         print(f"Informações de 4 consultas para a tabela '{tabela}' carregadas.")
         
     print("\nTodas as consultas foram executadas com sucesso!")
 
-    # Passo 3: Salvar todos os DataFrames no arquivo Excel, em uma aba por tabela
+    # Passo 3: Salvar todos os DataFrames no arquivo Excel, em uma aba por tabela, usando xlsxwriter
     if resultados_por_tabela:
-        with pd.ExcelWriter('detalhes_todas_tabelas.xlsx') as writer:
-            for nome_tabela, dfs in resultados_por_tabela.items():
-                current_row = 2 # Começa na linha 3 (B3)
+        try:
+            with pd.ExcelWriter('detalhes_todas_tabelas.xlsx', engine='xlsxwriter') as writer:
+                workbook = writer.book
 
-                # Seção 1: Estrutura da Tabela
-                pd.DataFrame([['--- ESTRUTURA DA TABELA ---']]).to_excel(writer, sheet_name=nome_tabela, header=False, index=False, startrow=current_row, startcol=1)
-                dfs['estrutura'].to_excel(writer, sheet_name=nome_tabela, index=False, startrow=current_row + 1, startcol=1)
-                current_row += len(dfs['estrutura']) + 3
+                # Define os formatos
+                header_format_blue = workbook.add_format({
+                    'bold': True,
+                    'bg_color': '#0070C0',
+                    'font_color': 'white',
+                    'align': 'center',
+                    'valign': 'vcenter'
+                })
+                header_format_gray = workbook.add_format({
+                    'bold': True,
+                    'bg_color': '#D9D9D9',
+                    'font_color': 'black',
+                    'align': 'left',
+                    'valign': 'vcenter'
+                })
+                bold_format = workbook.add_format({'bold': True})
+                red_format = workbook.add_format({'color': 'red'})
+                
+                # Formato para células mescladas de descrição com quebra de texto
+                description_format = workbook.add_format({'text_wrap': True})
 
-                # Seção 2: Descrições das Colunas
-                if not dfs['descricoes'].empty:
-                    pd.DataFrame([['--- DESCRIÇÕES DAS COLUNAS ---']]).to_excel(writer, sheet_name=nome_tabela, header=False, index=False, startrow=current_row, startcol=1)
-                    dfs['descricoes'].to_excel(writer, sheet_name=nome_tabela, index=False, startrow=current_row + 1, startcol=1)
-                    current_row += len(dfs['descricoes']) + 3
+                # NOVO: Formato para as células de dados de tabela com bordas
+                table_header_format = workbook.add_format({
+                    'bold': True,
+                    'border': 1,
+                    'bg_color': '#D9D9D9' # Adiciona fundo cinza para os cabeçalhos das tabelas de dados
+                })
+                table_data_format = workbook.add_format({'border': 1})
 
-                # Seção 3: Índices
-                if not dfs['indices'].empty:
-                    pd.DataFrame([['--- ÍNDICES ---']]).to_excel(writer, sheet_name=nome_tabela, header=False, index=False, startrow=current_row, startcol=1)
-                    dfs['indices'].to_excel(writer, sheet_name=nome_tabela, index=False, startrow=current_row + 1, startcol=1)
-                    current_row += len(dfs['indices']) + 3
+                # Função auxiliar para escrever o DataFrame com bordas
+                def write_df_to_excel(worksheet, df, start_row, start_col):
+                    # Escreve o cabeçalho
+                    for col_num, value in enumerate(df.columns.values):
+                        worksheet.write(start_row, start_col + col_num, value, table_header_format)
+                    
+                    # Escreve os dados
+                    for row_num, row_data in enumerate(df.values):
+                        for col_num, value in enumerate(row_data):
+                            worksheet.write(start_row + 1 + row_num, start_col + col_num, value, table_data_format)
 
-                # Seção 4: Chaves Estrangeiras (FKs)
-                if not dfs['fks'].empty:
-                    pd.DataFrame([['--- CHAVES ESTRANGEIRAS (FKs) ---']]).to_excel(writer, sheet_name=nome_tabela, header=False, index=False, startrow=current_row, startcol=1)
-                    dfs['fks'].to_excel(writer, sheet_name=nome_tabela, index=False, startrow=current_row + 1, startcol=1)
-        
-        print("\nArquivo Excel 'detalhes_todas_tabelas.xlsx' gerado com sucesso!")
+                for nome_tabela, dfs in resultados_por_tabela.items():
+                    # Adiciona uma nova planilha para cada tabela
+                    worksheet = workbook.add_worksheet(nome_tabela)
+                    writer.sheets[nome_tabela] = worksheet 
+                    
+                    # Ajusta a largura das colunas
+                    for i in range(1, 10):
+                        worksheet.set_column(i, i, 20)
+                    
+                    current_row = 1 # Começa na linha 2 (índice 1)
+
+                    # Seção do Cabeçalho principal (como na imagem)
+                    worksheet.merge_range(current_row, 1, current_row + 1, 2, 'Tabela 001', header_format_blue)
+
+                    worksheet.write(current_row + 2, 1, 'Nome da Tabela:', bold_format)
+                    worksheet.write(current_row + 2, 2, nome_tabela)
+                    
+                    worksheet.write(current_row + 3, 1, 'Descrição:', bold_format)
+                    worksheet.merge_range(current_row + 3, 2, current_row + 3, 7, 'Breve descrição do conteúdo da tabela. Breve descrição do conteúdo da tabela. Breve descrição do conteúdo da tabela.', description_format)
+                    
+                    worksheet.write(current_row + 5, 1, 'Número de Colunas:', bold_format)
+                    worksheet.write(current_row + 5, 2, len(dfs['estrutura']), table_data_format)
+                    worksheet.write(current_row + 6, 1, 'Número de Linhas (atual):', bold_format)
+                    worksheet.write(current_row + 6, 2, dfs['num_linhas'], table_data_format)
+
+                    # Legenda
+                    worksheet.write(current_row + 2, 5, 'PK = PRIMARY KEY (chave primária)', red_format)
+                    worksheet.write(current_row + 3, 5, 'FK = FOREIGN KEY (chave estrangeira)', red_format)
+                    worksheet.write(current_row + 4, 5, 'M = Mandatory (campo obrigatório)', red_format)
+                    
+                    # Seção 1: Colunas
+                    current_row = 10
+                    worksheet.write(current_row, 1, 'Colunas', header_format_gray)
+                    write_df_to_excel(worksheet, dfs['estrutura'], current_row + 1, 1)
+                    current_row += len(dfs['estrutura']) + 3
+
+                    # Seção 2: Descrições
+                    if not dfs['descricoes'].empty:
+                        worksheet.write(current_row, 1, 'Descrição das Colunas', header_format_gray)
+                        write_df_to_excel(worksheet, dfs['descricoes'], current_row + 1, 1)
+                        current_row += len(dfs['descricoes']) + 3
+
+                    # Seção 3: Índices
+                    if not dfs['indices'].empty:
+                        worksheet.write(current_row, 1, 'Índices (Indexes)', header_format_gray)
+                        write_df_to_excel(worksheet, dfs['indices'], current_row + 1, 1)
+                        current_row += len(dfs['indices']) + 3
+
+                    # Seção 4: Chaves Estrangeiras (FKs)
+                    if not dfs['fks'].empty:
+                        worksheet.write(current_row, 1, 'Chaves Estrangeiras (FKs)', header_format_gray)
+                        write_df_to_excel(worksheet, dfs['fks'], current_row + 1, 1)
+            
+            print("\nArquivo Excel 'detalhes_todas_tabelas.xlsx' gerado com sucesso!")
+
+        except Exception as e:
+            print(f"Erro ao gerar o arquivo Excel: {e}")
 
 except pyodbc.Error as ex:
     print(f"Erro na execução: {ex}")
