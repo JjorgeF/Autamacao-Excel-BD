@@ -187,10 +187,13 @@ try:
                 })
                 header_format_gray = workbook.add_format({
                     'bold': True,
-                    'bg_color': '#D9D9D9',
+                    'bg_color': "#FFFFFF",
+                    'border': 1,
+                    'border_color': "#ACACAC",
                     'font_color': 'black',
                     'align': 'left',
-                    'valign': 'vcenter'
+                    'valign': 'vcenter',
+                    'italic': True #itálico como o Xina pediu
                 })
                 bold_format = workbook.add_format({'bold': True})
                 red_format = workbook.add_format({'color': 'red'})
@@ -249,16 +252,14 @@ try:
                     'valign': 'vcenter'
                 })
                 
-                # NOVO: Formatos para as BORDAS AZUIS EXTERNAS
-                blue_border = '#0070C0'
+                # REMOVIDO/AJUSTADO: Removido o formato de borda azul
+                # blue_border = '#0070C0'
                 
                 # NOVO: Função para escrever o DataFrame e aplicar a borda externa
-                def escrever_tabela_com_borda(worksheet, df, start_row, start_col):
+                def escrever_tabela_sem_borda_azul(worksheet, df, start_row, start_col): # AJUSTADO: Nome da função
                     num_rows = len(df)
                     num_cols = len(df.columns)
 
-                    # Se o DataFrame estiver vazio, retorna um DataFrame com 3 linhas de '-'
-                    # e 4 colunas para manter o padrão da imagem.
                     if num_rows == 0:
                         df = pd.DataFrame([['-'] * 4] * 3, columns=['', '', '', ''])
                         num_rows = len(df)
@@ -266,47 +267,22 @@ try:
 
                     # Escreve o cabeçalho
                     for col_num, value in enumerate(df.columns.values):
-                        # Combina os formatos em um novo dicionário
-                        format_dict = {
-                            'bold': True, 'bg_color': '#D9D9D9', 'border': 1, 'border_color': 'black',
-                            'top': 1, 'left': 1, 'right': 1, 'bottom': 1
-                        }
-
-                        if col_num == 0:
-                            format_dict['left'] = 5
-                            format_dict['border_color'] = blue_border
-                        if col_num == num_cols - 1:
-                            format_dict['right'] = 5
-                            format_dict['border_color'] = blue_border
-                        
-                        format_dict['top'] = 5
-                        format_dict['border_color'] = blue_border
-                        
-                        worksheet.write(start_row, start_col + col_num, value, workbook.add_format(format_dict))
+                        header_format = workbook.add_format({
+                            'bold': True,
+                            'bg_color': '#D9D9D9',
+                            'border': 1
+                        })
+                        worksheet.write(start_row, start_col + col_num, value, header_format)
 
                     # Escreve os dados
                     for row_num, row_data in enumerate(df.values):
                         for col_num, value in enumerate(row_data):
-                            # Combina os formatos em um novo dicionário
-                            format_dict = {
-                                'border': 1, 'border_color': 'black',
-                                'top': 1, 'left': 1, 'right': 1, 'bottom': 1
-                            }
-                            
-                            if col_num == 0:
-                                format_dict['left'] = 5
-                                format_dict['border_color'] = blue_border
-                            if col_num == num_cols - 1:
-                                format_dict['right'] = 5
-                                format_dict['border_color'] = blue_border
-                            if row_num == num_rows - 1:
-                                format_dict['bottom'] = 5
-                                format_dict['border_color'] = blue_border
-
-                            worksheet.write(start_row + 1 + row_num, start_col + col_num, value, workbook.add_format(format_dict))
+                            data_format = workbook.add_format({
+                                'border': 1
+                            })
+                            worksheet.write(start_row + 1 + row_num, start_col + col_num, value, data_format)
                     
                     return start_row + 1 + num_rows + 1
-
 
                 # ADICIONADO: Adiciona o título "Detalhes de Todas as Tabelas" na linha 2 da ÚNICA aba
                 worksheet.merge_range('B2:L2', 'Detalhes de Todas as Tabelas', title_format)
@@ -318,32 +294,30 @@ try:
                 # Define a linha inicial para a primeira tabela
                 current_row = 3
 
+                # NOVO: Bloco de código para escrever as informações do banco de dados, fora do loop
+                worksheet.write(current_row, 1, 'Nome do banco de dados (dbname):', header_label_format)
+                worksheet.write(current_row, 2, database, value_cell_format)
+                current_row += 1
+                
+                worksheet.write(current_row, 1, 'Nome do Schema:', header_cell_format)
+                worksheet.write(current_row, 2, 'dbo', value_cell_format)
+                current_row += 1
+                
+                worksheet.write(current_row, 1, 'Código/sigla do banco de dados:', header_cell_format)
+                worksheet.write(current_row, 2, database, value_cell_format)
+                current_row += 1
+
+                worksheet.write(current_row, 1, 'SGBD:', header_cell_format)
+                worksheet.write(current_row, 2, 'Microsoft SQL Server', value_cell_format)
+                current_row += 1
+                
+                worksheet.write(current_row, 1, 'Quantidade de Tabelas:', header_cell_format)
+                worksheet.write(current_row, 2, len(lista_tabelas), value_cell_format)
+                current_row += 2 # pula 2 linhas para o próximo bloco
+
                 # Loop para escrever cada tabela na mesma planilha
-                # ADICIONADO: enumerate para obter o índice (numeração da tabela)
                 for i, (nome_tabela, dfs) in enumerate(resultados_por_tabela.items(), 1):
-                    # Seção do cabeçalho superior (Nome do Banco, Schema, etc.)
-                    worksheet.write(current_row, 1, 'Nome do banco de dados (dbname):', header_label_format)
-                    worksheet.write(current_row, 2, database, value_cell_format)
-                    current_row += 1
-                    
-                    worksheet.write(current_row, 1, 'Nome do Schema:', header_cell_format)
-                    worksheet.write(current_row, 2, 'dbo', value_cell_format)
-                    current_row += 1
-                    
-                    worksheet.write(current_row, 1, 'Código/sigla do banco de dados:', header_cell_format)
-                    worksheet.write(current_row, 2, database, value_cell_format)
-                    current_row += 1
-
-                    worksheet.write(current_row, 1, 'SGBD:', header_cell_format)
-                    worksheet.write(current_row, 2, 'Microsoft SQL Server', value_cell_format)
-                    current_row += 1
-                    
-                    worksheet.write(current_row, 1, 'Quantidade de Tabelas:', header_cell_format)
-                    worksheet.write(current_row, 2, len(lista_tabelas), value_cell_format)
-                    current_row += 2 # pula 2 linhas para o próximo bloco
-
                     # Seção do Título da Tabela
-                    # ALTERADO: Usa o contador 'i' para criar a numeração da tabela
                     worksheet.merge_range(current_row, 1, current_row + 1, 2, f'Tabela {i:03}', header_format_blue) # título "Tabela 001", "Tabela 002", etc.
                     current_row += 2
                     
@@ -369,32 +343,32 @@ try:
                     current_row += 1
 
                     # Legenda
-                    worksheet.write(current_row - 3, 9, 'PK = PRIMARY KEY (chave primária)', ) # 3 = a linha que ele vai ficar, podendo mudar de acordo com o que tem acima dela. 9 = a célula que ele vai ficar, no caso é a J
-                    worksheet.write(current_row - 2, 9, 'FK = FOREIGN KEY (chave estrangeira)', )
-                    worksheet.write(current_row - 1, 9, 'M = Mandatory (campo obrigatório)', )
+                    worksheet.write(current_row - 4, 9, 'PK = PRIMARY KEY (chave primária)', ) # 3 = a linha que ele vai ficar, podendo mudar de acordo com o que tem acima dela. 9 = a célula que ele vai ficar, no caso é a J
+                    worksheet.write(current_row - 3, 9, 'FK = FOREIGN KEY (chave estrangeira)', )
+                    worksheet.write(current_row - 2, 9, 'M = Mandatory (campo obrigatório)', )
                     
                     # Pula algumas linhas para a próxima seção
                     current_row += 2
                     
                     # Seção 1: Colunas
                     worksheet.write(current_row, 1, 'Colunas', header_format_gray)
-                    current_row = escrever_tabela_com_borda(worksheet, dfs['estrutura'], current_row + 1, 1)
+                    current_row = escrever_tabela_sem_borda_azul(worksheet, dfs['estrutura'], current_row + 1, 1)
 
                     # NOVO: Seção 2: Descrições
                     worksheet.write(current_row, 1, 'Descrição das Colunas', header_format_gray)
-                    current_row = escrever_tabela_com_borda(worksheet, dfs['descricoes'], current_row + 1, 1)
+                    current_row = escrever_tabela_sem_borda_azul(worksheet, dfs['descricoes'], current_row + 1, 1)
 
                     # NOVO: Seção 3: Índices
                     worksheet.write(current_row, 1, 'Índices (Indexes)', header_format_gray)
-                    current_row = escrever_tabela_com_borda(worksheet, dfs['indices'], current_row + 1, 1)
+                    current_row = escrever_tabela_sem_borda_azul(worksheet, dfs['indices'], current_row + 1, 1)
                     
                     # NOVO: Seção 4: Chaves Estrangeiras (FKs)
                     worksheet.write(current_row, 1, 'Chaves Estrangeiras (FKs)', header_format_gray)
-                    current_row = escrever_tabela_com_borda(worksheet, dfs['fks'], current_row + 1, 1)
+                    current_row = escrever_tabela_sem_borda_azul(worksheet, dfs['fks'], current_row + 1, 1)
                     
                     # NOVO: Seção 5: Restrições (Constraints)
                     worksheet.write(current_row, 1, 'Restrições (Constraints)', header_format_gray)
-                    current_row = escrever_tabela_com_borda(worksheet, dfs['constraints'], current_row + 1, 1)
+                    current_row = escrever_tabela_sem_borda_azul(worksheet, dfs['constraints'], current_row + 1, 1)
 
                     # Adiciona linhas de espaçamento entre as tabelas
                     current_row += 5
