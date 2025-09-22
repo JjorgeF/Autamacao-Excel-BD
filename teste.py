@@ -10,7 +10,6 @@ username = '*****'
 password = '*****'
 driver_name = '*****'
 conexao_str = f'DRIVER={driver_name};SERVER={server};DATABASE={database};UID={username};PWD={password}'
-
 # Dicionário para armazenar todos os DataFrames de todas as tabelas
 resultados_por_tabela = {}
 
@@ -106,7 +105,6 @@ try:
             I.name, IC.index_column_id;
     """
 
-    # NOVO SELECT para as chaves estrangeiras, com a adição da cláusula WHERE
     query_fks = """
         DECLARE @TB AS VARCHAR(50)
         SET @TB = ?
@@ -126,6 +124,22 @@ try:
             'Nome da Chave Estrangeira';
     """
     
+    # NOVO: Query para obter todos os constraints da tabela
+    query_constraints = """
+        SELECT
+            TC.CONSTRAINT_NAME AS 'Nome da Restrição',
+            TC.CONSTRAINT_TYPE AS 'Tipo',
+            CCU.COLUMN_NAME AS 'Nome da Coluna',
+            'detalhes' AS 'Detalhes'
+        FROM
+            INFORMATION_SCHEMA.TABLE_CONSTRAINTS AS TC
+        JOIN
+            INFORMATION_SCHEMA.CONSTRAINT_COLUMN_USAGE AS CCU
+            ON TC.CONSTRAINT_NAME = CCU.CONSTRAINT_NAME
+        WHERE
+            TC.TABLE_NAME = ?;
+    """
+
     # Passo 2: Executar todas as consultas para cada tabela e armazenar os resultados
     for tabela in lista_tabelas:
         print(f"\nColetando informações da tabela: {tabela}")
@@ -134,6 +148,7 @@ try:
         df_descricoes = pd.read_sql(query_descricoes, conexao, params=(tabela,))
         df_indices = pd.read_sql(query_detalhes_indices, conexao, params=(database, tabela))
         df_fks = pd.read_sql(query_fks, conexao, params=(tabela,))
+        df_constraints = pd.read_sql(query_constraints, conexao, params=(tabela,))
         
         # Corrigido: Envolvendo o nome da tabela com colchetes [] para evitar erros com espaços
         query_linhas = f"SELECT COUNT(*) FROM [{tabela}];"
@@ -145,10 +160,11 @@ try:
             'descricoes': df_descricoes,
             'indices': df_indices,
             'fks': df_fks,
-            'num_linhas': num_linhas
+            'num_linhas': num_linhas,
+            'constraints': df_constraints # NOVO: Adiciona o DataFrame de constraints
         }
 
-        print(f"Informações de 4 consultas para a tabela '{tabela}' carregadas.")
+        print(f"Informações de 5 consultas para a tabela '{tabela}' carregadas.")
         
     print("\nTodas as consultas foram executadas com sucesso!")
 
@@ -199,6 +215,22 @@ try:
                     'border': 1
                 })
 
+                # NOVO: Formatos para o cabeçalho da tabela de detalhes
+                # ONDE ALTERAR: Formato para as células de título (fundo cinza e letra vermelha)
+                header_label_format = workbook.add_format({
+                    'bold': True,
+                    'bg_color': '#D9D9D9',
+                    'font_color': 'red',
+                    'border': 1
+                })
+
+                # ONDE ALTERAR: Formato para as células de valor, com quebra de texto
+                header_value_format = workbook.add_format({
+                    'border': 1,
+                    'text_wrap': True
+                })
+
+
                 # Função auxiliar para escrever o DataFrame com bordas
                 def write_df_to_excel(worksheet, df, start_row, start_col):
                     # Escreve o cabeçalho
@@ -246,26 +278,31 @@ try:
                     worksheet.merge_range(current_row, 1, current_row + 1, 2, 'Tabela 001', header_format_blue)
                     current_row += 2
                     
-                    worksheet.write(current_row, 1, 'Nome da Tabela:', bold_format)
-                    worksheet.write(current_row, 2, nome_tabela, table_data_format)
+                    # CORRIGIDO: Mescla o rótulo e escreve o valor
+                    worksheet.merge_range(current_row, 1, current_row, 2, 'Nome da Tabela:', header_label_format)
+                    worksheet.merge_range(current_row, 3, current_row, 7, nome_tabela, header_value_format)
                     current_row += 1
                     
-                    worksheet.write(current_row, 1, 'Descrição:', bold_format)
-                    worksheet.merge_range(current_row, 2, current_row, 7, 'Breve descrição do conteúdo da tabela. Breve descrição do conteúdo da tabela. Breve descrição do conteúdo da tabela.', description_format)
+                    # CORRIGIDO: Mescla o rótulo e escreve o valor para 'Descrição'
+                    worksheet.merge_range(current_row, 1, current_row, 2, 'Descrição:', header_label_format)
+                    worksheet.merge_range(current_row, 3, current_row, 7, 'Breve descrição do conteúdo da tabela. Breve descrição do conteúdo da tabela. Breve descrição do conteúdo da tabela.', header_value_format)
+                    worksheet.set_row(current_row, 60)
                     current_row += 1
                     
-                    worksheet.write(current_row, 1, 'Número de Colunas:', bold_format)
-                    worksheet.write(current_row, 2, len(dfs['estrutura']), table_data_format)
+                    # CORRIGIDO: Mescla o rótulo e escreve o valor para 'Número de Colunas'
+                    worksheet.merge_range(current_row, 1, current_row, 2, 'Número de Colunas:', header_label_format)
+                    worksheet.merge_range(current_row, 3, current_row, 7, len(dfs['estrutura']), header_value_format)
                     current_row += 1
                     
-                    worksheet.write(current_row, 1, 'Número de Linhas (atual):', bold_format)
-                    worksheet.write(current_row, 2, dfs['num_linhas'], table_data_format)
+                    # CORRIGIDO: Mescla o rótulo e escreve o valor para 'Número de Linhas'
+                    worksheet.merge_range(current_row, 1, current_row, 2, 'Número de Linhas (atual):', header_label_format)
+                    worksheet.merge_range(current_row, 3, current_row, 7, dfs['num_linhas'], header_value_format)
                     current_row += 1
 
                     # Legenda
-                    worksheet.write(current_row - 3, 5, 'PK = PRIMARY KEY (chave primária)', red_format)
-                    worksheet.write(current_row - 2, 5, 'FK = FOREIGN KEY (chave estrangeira)', red_format)
-                    worksheet.write(current_row - 1, 5, 'M = Mandatory (campo obrigatório)', red_format)
+                    worksheet.write(current_row - 3, 8, 'PK = PRIMARY KEY (chave primária)', red_format)
+                    worksheet.write(current_row - 2, 8, 'FK = FOREIGN KEY (chave estrangeira)', red_format)
+                    worksheet.write(current_row - 1, 8, 'M = Mandatory (campo obrigatório)', red_format)
                     
                     # Pula algumas linhas para a próxima seção
                     current_row += 2
@@ -275,23 +312,26 @@ try:
                     write_df_to_excel(worksheet, dfs['estrutura'], current_row + 1, 1)
                     current_row += len(dfs['estrutura']) + 3
 
-                    # Seção 2: Descrições
-                    if not dfs['descricoes'].empty:
-                        worksheet.write(current_row, 1, 'Descrição das Colunas', header_format_gray)
-                        write_df_to_excel(worksheet, dfs['descricoes'], current_row + 1, 1)
-                        current_row += len(dfs['descricoes']) + 3
+                    # NOVO: Seção 2: Descrições
+                    worksheet.write(current_row, 1, 'Descrição das Colunas', header_format_gray)
+                    write_df_to_excel(worksheet, dfs['descricoes'], current_row + 1, 1)
+                    current_row += len(dfs['descricoes']) + 3
 
-                    # Seção 3: Índices
-                    if not dfs['indices'].empty:
-                        worksheet.write(current_row, 1, 'Índices (Indexes)', header_format_gray)
-                        write_df_to_excel(worksheet, dfs['indices'], current_row + 1, 1)
-                        current_row += len(dfs['indices']) + 3
+                    # NOVO: Seção 3: Índices
+                    worksheet.write(current_row, 1, 'Índices (Indexes)', header_format_gray)
+                    write_df_to_excel(worksheet, dfs['indices'], current_row + 1, 1)
+                    current_row += len(dfs['indices']) + 3
+                    
+                    # NOVO: Seção 4: Chaves Estrangeiras (FKs)
+                    worksheet.write(current_row, 1, 'Chaves Estrangeiras (FKs)', header_format_gray)
+                    write_df_to_excel(worksheet, dfs['fks'], current_row + 1, 1)
+                    current_row += len(dfs['fks']) + 3
+                    
+                    # NOVO: Seção 5: Restrições (Constraints)
+                    worksheet.write(current_row, 1, 'Restrições (Constraints)', header_format_gray)
+                    write_df_to_excel(worksheet, dfs['constraints'], current_row + 1, 1)
+                    current_row += len(dfs['constraints']) + 3
 
-                    # Seção 4: Chaves Estrangeiras (FKs)
-                    if not dfs['fks'].empty:
-                        worksheet.write(current_row, 1, 'Chaves Estrangeiras (FKs)', header_format_gray)
-                        write_df_to_excel(worksheet, dfs['fks'], current_row + 1, 1)
-            
             print("\nArquivo Excel 'detalhes_todas_tabelas.xlsx' gerado com sucesso!")
 
         except Exception as e:
