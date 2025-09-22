@@ -8,7 +8,7 @@ from datetime import datetime
 server = '*****'
 database = '*****'
 username = '*****'
-password = '*****$'
+password = '*****'
 driver_name = '*****'
 conexao_str = f'DRIVER={driver_name};SERVER={server};DATABASE={database};UID={username};PWD={password}'
 # Dicionário para armazenar todos os DataFrames de todas as tabelas
@@ -169,11 +169,13 @@ try:
         
     print("\nTodas as consultas foram executadas com sucesso!")
 
-    # Passo 3: Salvar todos os DataFrames no arquivo Excel, em uma aba por tabela, usando xlsxwriter
+    # Passo 3: Salvar todos os DataFrames em uma única aba, um embaixo do outro, usando xlsxwriter
     if resultados_por_tabela:
         try:
-            with pd.ExcelWriter('detalhes_todas_tabelas.xlsx', engine='xlsxwriter') as writer:
+            with pd.ExcelWriter('dicionario_todas_tabelas_unica_aba.xlsx', engine='xlsxwriter') as writer:
                 workbook = writer.book
+                worksheet = workbook.add_worksheet('Dicionário de Dados')
+                writer.sheets['Dicionário de Dados'] = worksheet
 
                 # Define os formatos
                 header_format_blue = workbook.add_format({
@@ -217,6 +219,14 @@ try:
                 })
 
                 # NOVO: Formatos para o cabeçalho da tabela de detalhes
+                header_sub_label_format = workbook.add_format({
+                    'bold': True,
+                    'bg_color': '#D9D9D9',
+                    'font_color': 'black',
+                    'border': 1
+                })
+
+                # títulos | 'Nome do banco de dados (dbname):' e o 'Nome da Tabela:' os dois em vermelho, com borda e negrito.
                 header_label_format = workbook.add_format({
                     'bold': True,
                     'bg_color': '#D9D9D9',
@@ -297,23 +307,22 @@ try:
                     
                     return start_row + 1 + num_rows + 1
 
-                # Loop através de cada tabela para criar uma aba e adicionar os dados
-                for nome_tabela, dfs in resultados_por_tabela.items():
-                    # Adiciona uma nova planilha para cada tabela
-                    worksheet = workbook.add_worksheet(nome_tabela)
-                    writer.sheets[nome_tabela] = worksheet 
 
-                    # ADICIONADO: Adiciona o título "Detalhes de Todas as Tabelas" na linha 2 de CADA aba
-                    worksheet.merge_range('C2:L2', 'Detalhes de Todas as Tabelas', title_format)
-                    
-                    # Ajusta a largura das colunas
-                    for i in range(1, 10):
-                        worksheet.set_column(i, i, 20)
-                    
-                    current_row = 3 # Começa na linha 4 (índice 3), para dar espaço para o título.
+                # ADICIONADO: Adiciona o título "Detalhes de Todas as Tabelas" na linha 2 da ÚNICA aba
+                worksheet.merge_range('B2:L2', 'Detalhes de Todas as Tabelas', title_format)
+                
+                # Ajusta a largura das colunas
+                for i in range(1, 10):
+                    worksheet.set_column(i, i, 20)
 
+                # Define a linha inicial para a primeira tabela
+                current_row = 3
+
+                # Loop para escrever cada tabela na mesma planilha
+                # ADICIONADO: enumerate para obter o índice (numeração da tabela)
+                for i, (nome_tabela, dfs) in enumerate(resultados_por_tabela.items(), 1):
                     # Seção do cabeçalho superior (Nome do Banco, Schema, etc.)
-                    worksheet.write(current_row, 1, 'Nome do banco de dados (dbname):', header_cell_format)
+                    worksheet.write(current_row, 1, 'Nome do banco de dados (dbname):', header_label_format)
                     worksheet.write(current_row, 2, database, value_cell_format)
                     current_row += 1
                     
@@ -334,34 +343,35 @@ try:
                     current_row += 2 # pula 2 linhas para o próximo bloco
 
                     # Seção do Título da Tabela
-                    worksheet.merge_range(current_row, 1, current_row + 1, 2, 'Tabela 001', header_format_blue)
+                    # ALTERADO: Usa o contador 'i' para criar a numeração da tabela
+                    worksheet.merge_range(current_row, 1, current_row + 1, 2, f'Tabela {i:03}', header_format_blue) # título "Tabela 001", "Tabela 002", etc.
                     current_row += 2
                     
-                    # CORRIGIDO: Mescla o rótulo e escreve o valor
+                    # Mescla o rótulo e escreve o valor
                     worksheet.merge_range(current_row, 1, current_row, 2, 'Nome da Tabela:', header_label_format)
                     worksheet.merge_range(current_row, 3, current_row, 7, nome_tabela, header_value_format)
                     current_row += 1
                     
-                    # CORRIGIDO: Mescla o rótulo e escreve o valor para 'Descrição'
-                    worksheet.merge_range(current_row, 1, current_row, 2, 'Descrição:', header_label_format)
+                    # Mescla o rótulo e escreve o valor para 'Descrição'
+                    worksheet.merge_range(current_row, 1, current_row, 2, 'Descrição:', header_sub_label_format)
                     worksheet.merge_range(current_row, 3, current_row, 7, 'Breve descrição do conteúdo da tabela. Breve descrição do conteúdo da tabela. Breve descrição do conteúdo da tabela.', header_value_format)
                     worksheet.set_row(current_row, 60)
                     current_row += 1
                     
-                    # CORRIGIDO: Mescla o rótulo e escreve o valor para 'Número de Colunas'
-                    worksheet.merge_range(current_row, 1, current_row, 2, 'Número de Colunas:', header_label_format)
+                    # Mescla o rótulo e escreve o valor para 'Número de Colunas'
+                    worksheet.merge_range(current_row, 1, current_row, 2, 'Número de Colunas:', header_sub_label_format)
                     worksheet.merge_range(current_row, 3, current_row, 7, len(dfs['estrutura']), header_value_format)
                     current_row += 1
                     
-                    # CORRIGIDO: Mescla o rótulo e escreve o valor para 'Número de Linhas'
-                    worksheet.merge_range(current_row, 1, current_row, 2, 'Número de Linhas (atual):', header_label_format)
+                    # Mescla o rótulo e escreve o valor para 'Número de Linhas'
+                    worksheet.merge_range(current_row, 1, current_row, 2, 'Número de Linhas (atual):', header_sub_label_format)
                     worksheet.merge_range(current_row, 3, current_row, 7, dfs['num_linhas'], header_value_format)
                     current_row += 1
 
                     # Legenda
-                    worksheet.write(current_row - 3, 8, 'PK = PRIMARY KEY (chave primária)', red_format)
-                    worksheet.write(current_row - 2, 8, 'FK = FOREIGN KEY (chave estrangeira)', red_format)
-                    worksheet.write(current_row - 1, 8, 'M = Mandatory (campo obrigatório)', red_format)
+                    worksheet.write(current_row - 3, 9, 'PK = PRIMARY KEY (chave primária)', ) # 3 = a linha que ele vai ficar, podendo mudar de acordo com o que tem acima dela. 9 = a célula que ele vai ficar, no caso é a J
+                    worksheet.write(current_row - 2, 9, 'FK = FOREIGN KEY (chave estrangeira)', )
+                    worksheet.write(current_row - 1, 9, 'M = Mandatory (campo obrigatório)', )
                     
                     # Pula algumas linhas para a próxima seção
                     current_row += 2
@@ -386,7 +396,10 @@ try:
                     worksheet.write(current_row, 1, 'Restrições (Constraints)', header_format_gray)
                     current_row = escrever_tabela_com_borda(worksheet, dfs['constraints'], current_row + 1, 1)
 
-                print("\nArquivo Excel 'detalhes_todas_tabelas.xlsx' gerado com sucesso!")
+                    # Adiciona linhas de espaçamento entre as tabelas
+                    current_row += 5
+
+                print("\nArquivo Excel 'dicionario_todas_tabelas_unica_aba.xlsx' gerado com sucesso!")
 
         except Exception as e:
             print(f"Erro ao gerar o arquivo Excel: {e}")
