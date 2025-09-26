@@ -5,6 +5,7 @@ import numpy as np
 from datetime import datetime
 
 # Informações de conexão
+# declarei as variáveis assumindo o valor a serem preenchidos para contornar erro ao acessar banco
 server = '*****'
 database = '*****'
 username = '*****'
@@ -13,21 +14,23 @@ driver_name = '*****'
 conexao_str = f'DRIVER={driver_name};SERVER={server};DATABASE={database};UID={username};PWD={password}'
 
 
-# dicionário para armazenar todos os DataFrames de todas as tabelas
+# dicionário para armazenar todos os DataFrames de todas as tabelas | facilita editar a perfumaria do excel depois
 resultados_por_tabela = {}
 
 try:
-    # Tenta estabelecer a conexão
+    # conecta no banco através do script
     conexao = pyodbc.connect(conexao_str)
     print("Conectado!! AEEEEE!!!")
 
-    # Passo 1: Obter a lista de todas as tabelas do banco de dados
+    # lista de todas as tabelas do banco de dados
     query_tabelas = "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_CATALOG = ? AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME;"
     df_tabelas = pd.read_sql(query_tabelas, conexao, params=(database,))
     lista_tabelas = df_tabelas['TABLE_NAME'].tolist()
     print(f"Tabelas encontradas: {', '.join(lista_tabelas)}")
 
-    # Queries SQL (mantidas as originais)
+    # queires do BD | Testei no BD primeiro e depois inseri cada SELECT numa variável
+
+    # SELECT das Colunas
     query_detalhes_tabela = """
         DECLARE @NmBanco AS VARCHAR(100)
         DECLARE @TB AS VARCHAR(50)
@@ -61,7 +64,7 @@ try:
         ORDER BY
             C.ORDINAL_POSITION;
     """
-    
+    # SELECT da Descrição das Colunas
     query_descricoes = """
         DECLARE @NmBanco AS VARCHAR(100) -- Declarado!
         DECLARE @TB AS VARCHAR(50)
@@ -87,7 +90,7 @@ try:
             T.name,
             C.column_id;
     """
-
+    # SELECT dos Indices
     query_detalhes_indices = """
         DECLARE @NmBanco AS VARCHAR(100)
         DECLARE @TB AS VARCHAR(50)
@@ -110,7 +113,7 @@ try:
         ORDER BY
             I.name, IC.index_column_id;
     """
-
+    # SELECT das Foreign Keys
     query_fks = """
         DECLARE @NmBanco AS VARCHAR(100)
         DECLARE @TB AS VARCHAR(50)
@@ -129,7 +132,7 @@ try:
             'Nome';
                     """
     
-    # NOVO: Query para obter todos os constraints da tabela
+    # SELECT dos Constraints
     query_constraints = """
         SELECT
             TC.CONSTRAINT_TYPE AS 'Tipo',
@@ -145,21 +148,23 @@ try:
             TC.TABLE_NAME = ?;
     """
 
-    # Passo 2: Executar todas as consultas para cada tabela e armazenar os resultados
-    for tabela in lista_tabelas:
+    # executar todas as consultas para cada tabela e armazenar os resultados
+    for tabela in lista_tabelas: # percorre a lista de nomes de tabelas que foi coletada anteriormente.
         print(f"\nColetando informações da tabela: {tabela}")
-        
+        # a função pd é do Pandas onde ela roda as queries armazenadas em variáveis | faz a conexão no banco
+        # params= do pd.read_sql() substitui esses placeholders pelos valores (o nome do banco de dados e o nome da tabela atual) pra não dar problemas de injeção de SQL
         df_estrutura = pd.read_sql(query_detalhes_tabela, conexao, params=(database, tabela))
         df_descricoes = pd.read_sql(query_descricoes, conexao, params=(tabela,))
         df_indices = pd.read_sql(query_detalhes_indices, conexao, params=(database, tabela))
         df_fks = pd.read_sql(query_fks, conexao, params=(tabela,))
         df_constraints = pd.read_sql(query_constraints, conexao, params=(tabela,))
         
-        # Corrigido: Envolvendo o nome da tabela com colchetes [] para evitar erros com espaços
-        query_linhas = f"SELECT COUNT(*) FROM [{tabela}];"
-        df_linhas = pd.read_sql(query_linhas, conexao)
-        num_linhas = df_linhas.iloc[0, 0]
+        # envolvendo o nome da tabela com colchetes [] para evitar erros com espaços
+        query_linhas = f"SELECT COUNT(*) FROM [{tabela}];" # count de todas linhas da tabela
+        df_linhas = pd.read_sql(query_linhas, conexao) # roda a query count no banco e realiza a conexão | armazenando na variável
+        num_linhas = df_linhas.iloc[0, 0] # armazena o valor numérico puro nessa variável
         
+        # dicionário para armazenar todos resultados de cima
         resultados_por_tabela[tabela] = {
             'estrutura': df_estrutura,
             'descricoes': df_descricoes,
@@ -182,7 +187,9 @@ try:
                 worksheet = workbook.add_worksheet('Dicionário de Dados')
                 writer.sheets['Dicionário de Dados'] = worksheet
 
-                # Define os formatos
+                # define os formatos de vários partes
+
+                # formatação do "Título 001"
                 header_format_blue = workbook.add_format({
                     'bold': True,
                     'bg_color': '#0070C0',
@@ -191,6 +198,7 @@ try:
                     'valign': 'vcenter',
                     'font_size': 16
                 })
+
                 # título de cada sessão (SELECTs) (Colunas, Descrições, Índices, FKs, Constraints)
                 header_format_gray = workbook.add_format({
                     'bold': True,
@@ -232,6 +240,7 @@ try:
                     'valign': 'vcenter',
                     'border': 1
                 })
+
                 # células com os valores (ex: 'SGFWEB', 'dbo', 'Microsoft SQL Server', 'Quantidade de Tabelas')
                 value_cell_format = workbook.add_format({
                     'border': 1,
@@ -267,7 +276,7 @@ try:
                     'align': 'left'
                 })
 
-                # Formato para o título "Detalhes de Todas as Tabelas"
+                # formato para o título "Detalhes de Todas as Tabelas"
                 title_format = workbook.add_format({
                     'bold': True,
                     'font_size': 14,
@@ -277,7 +286,7 @@ try:
                     'valign': 'vcenter'
                 })
                 
-                # NOVO: Função para escrever o DataFrame e aplicar a borda externa
+                # função para escrever o DataFrame e aplicar a borda externa
                 def escrever_tabela_sem_borda_azul(worksheet, df, start_row, start_col):
                     num_rows = len(df)
                     num_cols = len(df.columns)
@@ -287,7 +296,7 @@ try:
                         num_rows = len(df)
                         num_cols = len(df.columns)
 
-                    # Escreve o cabeçalho
+                    # escreve o cabeçalho
                     for col_num, value in enumerate(df.columns.values):
                         header_format = workbook.add_format({
                             'bold': True,
